@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0f0f1a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7C3AED"/>
+      <stop offset="100%" style="stop-color:#A855F7"/>
+    </linearGradient>
+    <linearGradient id="merge-glow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#7C3AED;stop-opacity:0.3"/>
+      <stop offset="50%" style="stop-color:#A855F7;stop-opacity:0.6"/>
+      <stop offset="100%" style="stop-color:#7C3AED;stop-opacity:0.3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Subtle grid pattern -->
+  <g opacity="0.04" stroke="#fff" stroke-width="1">
+    <line x1="0" y1="256" x2="1024" y2="256"/>
+    <line x1="0" y1="512" x2="1024" y2="512"/>
+    <line x1="0" y1="768" x2="1024" y2="768"/>
+    <line x1="256" y1="0" x2="256" y2="1024"/>
+    <line x1="512" y1="0" x2="512" y2="1024"/>
+    <line x1="768" y1="0" x2="768" y2="1024"/>
+  </g>
+
+  <!-- Merge glow bar -->
+  <rect x="200" y="488" width="624" height="48" rx="24" fill="url(#merge-glow)"/>
+
+  <!-- Top split file piece -->
+  <g transform="translate(280, 200)">
+    <!-- File body -->
+    <path d="M0 30 Q0 0 30 0 L310 0 L380 70 L380 250 Q380 280 350 280 L30 280 Q0 280 0 250 Z" fill="#1E1E2E" stroke="#2A2A3E" stroke-width="4"/>
+    <!-- Dog ear -->
+    <path d="M310 0 L310 40 Q310 70 340 70 L380 70" fill="none" stroke="#2A2A3E" stroke-width="4"/>
+    <!-- File label ".ns0" -->
+    <text x="190" y="165" text-anchor="middle" font-family="monospace, Courier" font-size="72" font-weight="bold" fill="#7C3AED">.ns0</text>
+  </g>
+
+  <!-- Arrow down -->
+  <g transform="translate(470, 500)">
+    <polygon points="0,-20 84,-20 42,30" fill="url(#accent)" opacity="0.9"/>
+  </g>
+
+  <!-- Bottom merged file piece -->
+  <g transform="translate(280, 545)">
+    <!-- File body -->
+    <path d="M0 30 Q0 0 30 0 L310 0 L380 70 L380 250 Q380 280 350 280 L30 280 Q0 280 0 250 Z" fill="#1E1E2E" stroke="#7C3AED" stroke-width="4"/>
+    <!-- Dog ear -->
+    <path d="M310 0 L310 40 Q310 70 340 70 L380 70" fill="none" stroke="#7C3AED" stroke-width="4"/>
+    <!-- File label ".nsp" -->
+    <text x="190" y="165" text-anchor="middle" font-family="monospace, Courier" font-size="72" font-weight="bold" fill="#10B981">.nsp</text>
+    <!-- Checkmark -->
+    <g transform="translate(310, 220)">
+      <circle cx="0" cy="0" r="28" fill="#10B981" opacity="0.2"/>
+      <polyline points="-14,0 -4,12 16,-10" fill="none" stroke="#10B981" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+
+  <!-- Small split indicators on left side -->
+  <g transform="translate(190, 330)" opacity="0.5">
+    <rect width="60" height="18" rx="9" fill="#7C3AED" opacity="0.3"/>
+    <text x="30" y="13" text-anchor="middle" font-family="monospace" font-size="11" fill="#A855F7">.ns1</text>
+  </g>
+  <g transform="translate(190, 360)" opacity="0.35">
+    <rect width="60" height="18" rx="9" fill="#7C3AED" opacity="0.3"/>
+    <text x="30" y="13" text-anchor="middle" font-family="monospace" font-size="11" fill="#A855F7">.ns2</text>
+  </g>
+</svg>
