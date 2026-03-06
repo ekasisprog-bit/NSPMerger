@@ -14,7 +14,7 @@ import { ProgressCard } from "../src/components/ProgressCard";
 import { FileList } from "../src/components/FileList";
 
 export default function HomeScreen() {
-  const { state, folderScan, pickFolder, startProcessing, reset } = useProcessing();
+  const { state, folderScan, pickFolder, startProcessing, cancelProcessing, reset } = useProcessing();
 
   const isProcessing = !["idle", "done", "error"].includes(state.phase);
   const canStart = state.folderUri != null && !isProcessing && state.phase !== "done";
@@ -115,6 +115,28 @@ export default function HomeScreen() {
 
         {/* Progress */}
         <ProgressCard progress={state.progress} />
+
+        {/* Cancel Button */}
+        {isProcessing && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.cancelButton,
+              pressed && styles.cancelButtonPressed,
+            ]}
+            onPress={() => {
+              Alert.alert(
+                "Cancel Processing",
+                "Are you sure? Any partially processed files in cache will be cleaned up.",
+                [
+                  { text: "Keep Going", style: "cancel" },
+                  { text: "Cancel", style: "destructive", onPress: cancelProcessing },
+                ]
+              );
+            }}
+          >
+            <Text style={styles.cancelButtonText}>Cancel</Text>
+          </Pressable>
+        )}
 
         {/* Error */}
         {state.phase === "error" && state.errorMessage != null && (
@@ -267,6 +289,22 @@ const styles = StyleSheet.create({
     color: "#FCA5A5",
     fontSize: 14,
     lineHeight: 20,
+  },
+  cancelButton: {
+    borderWidth: 1.5,
+    borderColor: "#EF4444",
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  cancelButtonPressed: {
+    backgroundColor: "#1C0A0A",
+  },
+  cancelButtonText: {
+    color: "#EF4444",
+    fontSize: 16,
+    fontWeight: "600",
   },
   resetButton: {
     borderWidth: 1.5,

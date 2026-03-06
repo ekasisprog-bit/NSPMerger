@@ -1,10 +1,10 @@
-import { useReducer, useCallback, useState } from "react";
+import { useReducer, useCallback, useState, useRef } from "react";
 import {
   ProcessingState,
   ProcessingAction,
   ProcessingProgress,
 } from "@/types";
-import { runPipeline } from "@/services/processingPipeline";
+import { runPipeline, CancelHandle, CancelledError } from "@/services/processingPipeline";
 import NspNativeOps from "../../modules/nsp-native-ops";
 import { isArchiveFile } from "@/utils/patterns";
 
@@ -106,6 +106,7 @@ export interface FolderScanInfo {
 export function useProcessing() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [folderScan, setFolderScan] = useState<FolderScanInfo | null>(null);
+  const cancelRef = useRef<CancelHandle | null>(null);
 
   const pickFolder = useCallback(async () => {
     dispatch({ type: "START_SELECTING" });
@@ -139,34 +140,53 @@ export function useProcessing() {
   const startProcessing = useCallback(async () => {
     if (!state.folderUri) return;
 
+    const handle: CancelHandle = { cancelled: false };
+    cancelRef.current = handle;
+
     try {
-      const result = await runPipeline(state.folderUri, {
-        onPhaseChange: (phase) => {
-          if (phase === "copying") {
-            dispatch({ type: "START_COPYING", totalFiles: 0 });
-          } else if (phase === "extracting") {
-            dispatch({ type: "START_EXTRACTING", totalFiles: 0 });
-          } else if (phase === "scanning") {
-            dispatch({ type: "START_SCANNING" });
-          } else if (phase === "merging") {
-            dispatch({ type: "START_MERGING", totalGroups: 0 });
-          } else {
-            dispatch({ type: "START_CLEANUP" });
-          }
+      const result = await runPipeline(
+        state.folderUri,
+        {
+          onPhaseChange: (phase) => {
+            if (phase === "copying") {
+              dispatch({ type: "START_COPYING", totalFiles: 0 });
+            } else if (phase === "extracting") {
+              dispatch({ type: "START_EXTRACTING", totalFiles: 0 });
+            } else if (phase === "scanning") {
+              dispatch({ type: "START_SCANNING" });
+            } else if (phase === "merging") {
+              dispatch({ type: "START_MERGING", totalGroups: 0 });
+            } else {
+              dispatch({ type: "START_CLEANUP" });
+            }
+          },
+          onProgress: (update) => {
+            dispatch({ type: "UPDATE_PROGRESS", progress: update });
+          },
+          onError: (_message) => {
+            // Non-fatal errors are collected by the pipeline
+          },
         },
-        onProgress: (update) => {
-          dispatch({ type: "UPDATE_PROGRESS", progress: update });
-        },
-        onError: (_message) => {
-          // Non-fatal errors are collected by the pipeline
-        },
-      });
+        handle
+      );
 
       dispatch({ type: "COMPLETE", result });
     } catch (e: any) {
-      dispatch({ type: "ERROR", message: e.message });
+      if (e instanceof CancelledError) {
+        dispatch({ type: "ERROR", message: "Processing cancelled. Cache cleaned up." });
+      } else {
+        dispatch({ type: "ERROR", message: e.message });
+      }
+    } finally {
+      cancelRef.current = null;
     }
   }, [state.folderUri]);
+
+  const cancelProcessing = useCallback(() => {
+    if (cancelRef.current) {
+      cancelRef.current.cancelled = true;
+    }
+  }, []);
 
   const reset = useCallback(() => {
     setFolderScan(null);
@@ -178,6 +198,7 @@ export function useProcessing() {
     folderScan,
     pickFolder,
     startProcessing,
+    cancelProcessing,
     reset,
   };
 }

@@ -14,9 +14,17 @@ export interface MergeProgressEvent {
   percentage: number;
 }
 
+export interface CopyProgressEvent {
+  bytesCopied: number;
+  totalBytes: number;
+  fileName: string;
+  percentage: number;
+}
+
 type NspNativeOpsModuleEvents = {
   onExtractProgress: (event: ExtractProgressEvent) => void;
   onMergeProgress: (event: MergeProgressEvent) => void;
+  onCopyProgress: (event: CopyProgressEvent) => void;
   [key: string]: (...args: any[]) => void;
 }
 
@@ -40,7 +48,7 @@ export interface MergeResult {
 declare class NspNativeOpsModuleType extends NativeModule<NspNativeOpsModuleEvents> {
   pickDirectory(): Promise<string>;
   listDirectoryFiles(uri: string): Promise<FileInfo[]>;
-  copyToCache(uri: string, fileName: string): Promise<string>;
+  copyToCache(uri: string, fileName: string, totalBytes: number): Promise<string>;
   copyFromCache(
     cachePath: string,
     destTreeUri: string,

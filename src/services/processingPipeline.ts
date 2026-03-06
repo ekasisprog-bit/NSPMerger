@@ -16,9 +16,25 @@ interface PipelineCallbacks {
   onError: (message: string) => void;
 }
 
+export class CancelledError extends Error {
+  constructor() {
+    super("Processing was cancelled");
+    this.name = "CancelledError";
+  }
+}
+
+export interface CancelHandle {
+  cancelled: boolean;
+}
+
+function checkCancelled(handle: CancelHandle) {
+  if (handle.cancelled) throw new CancelledError();
+}
+
 export async function runPipeline(
   folderUri: string,
-  callbacks: PipelineCallbacks
+  callbacks: PipelineCallbacks,
+  cancelHandle: CancelHandle = { cancelled: false }
 ): Promise<ProcessingResult> {
   const startTime = Date.now();
   const errors: string[] = [];
@@ -69,6 +85,7 @@ export async function runPipeline(
     const allExtractedFiles: FileEntry[] = [];
 
     for (let i = 0; i < archiveFiles.length; i++) {
+      checkCancelled(cancelHandle);
       const archive = archiveFiles[i];
       const archiveIsRar = isRarFile(archive.name);
 
@@ -76,18 +93,33 @@ export async function runPipeline(
         currentFile: `Copying ${archive.name}...`,
         fileIndex: i + 1,
         totalFiles: archiveFiles.length,
+        bytesProcessed: 0,
+        totalBytes: archive.size,
         percentage: 0,
       });
 
       // Copy archive to cache
       callbacks.onPhaseChange("copying");
+      const copySub = NspNativeOps.addListener("onCopyProgress", (event) => {
+        callbacks.onProgress({
+          bytesProcessed: event.bytesCopied,
+          totalBytes: event.totalBytes,
+          percentage: event.percentage,
+          currentFile: `Copying: ${event.fileName}`,
+        });
+      });
+
       let cachedPath: string;
       try {
-        cachedPath = await NspNativeOps.copyToCache(archive.uri, archive.name);
+        cachedPath = await NspNativeOps.copyToCache(archive.uri, archive.name, archive.size);
       } catch (e: any) {
+        copySub.remove();
         errors.push(`Failed to copy ${archive.name}: ${e.message}`);
         continue;
       }
+
+      copySub.remove();
+      checkCancelled(cancelHandle);
 
       // Extract archive
       callbacks.onPhaseChange("extracting");
@@ -146,6 +178,7 @@ export async function runPipeline(
     }
 
     // Step 4: Scan & Group extracted files
+    checkCancelled(cancelHandle);
     callbacks.onPhaseChange("scanning");
     callbacks.onProgress({
       currentFile: `Scanning ${allExtractedFiles.length} extracted files...`,
@@ -173,6 +206,7 @@ export async function runPipeline(
       });
 
       for (let i = 0; i < scanResult.groups.length; i++) {
+        checkCancelled(cancelHandle);
         const group = scanResult.groups[i];
         callbacks.onProgress({
           currentFile: `Merging: ${group.outputName}`,

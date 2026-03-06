@@ -28,7 +28,7 @@ class NspNativeOpsModule : Module() {
     override fun definition() = ModuleDefinition {
         Name("NspNativeOps")
 
-        Events("onExtractProgress", "onMergeProgress")
+        Events("onExtractProgress", "onMergeProgress", "onCopyProgress")
 
         // ── SAF Directory Picker ──
 
@@ -156,13 +156,17 @@ class NspNativeOpsModule : Module() {
 
         // ── Copy file from SAF to cache ──
 
-        AsyncFunction("copyToCache") { uriString: String, fileName: String ->
-            Log.d(TAG, "copyToCache: $fileName from $uriString")
+        AsyncFunction("copyToCache") { uriString: String, fileName: String, totalBytes: Double ->
+            Log.d(TAG, "copyToCache: $fileName from $uriString (expected ${totalBytes.toLong()} bytes)")
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             val uri = Uri.parse(uriString)
             val cacheFile = File(context.cacheDir, "nsp_work/$fileName")
             cacheFile.parentFile?.mkdirs()
+
+            val expectedSize = totalBytes.toLong()
+            var bytesCopied = 0L
+            var lastProgressTime = 0L
 
             context.contentResolver.openInputStream(uri)?.use { input ->
                 FileOutputStream(cacheFile).use { output ->
@@ -170,6 +174,17 @@ class NspNativeOpsModule : Module() {
                     var bytesRead: Int
                     while (input.read(buffer).also { bytesRead = it } != -1) {
                         output.write(buffer, 0, bytesRead)
+                        bytesCopied += bytesRead
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
+                            lastProgressTime = now
+                            sendEvent("onCopyProgress", mapOf(
+                                "bytesCopied" to bytesCopied.toDouble(),
+                                "totalBytes" to expectedSize.toDouble(),
+                                "fileName" to fileName,
+                                "percentage" to if (expectedSize > 0) (bytesCopied * 100.0 / expectedSize) else 0.0
+                            ))
+                        }
                     }
                 }
             } ?: throw CodedException("COPY_FAILED", "Cannot open input stream for $fileName", null)
