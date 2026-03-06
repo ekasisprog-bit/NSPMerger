@@ -49,6 +49,24 @@ export type ProcessingPhase =
   | "done"
   | "error";
 
+export type ArchiveTaskStatus =
+  | "pending"
+  | "copying"
+  | "extracting"
+  | "grouping"
+  | "merging"
+  | "copying_back"
+  | "done"
+  | "error";
+
+export interface ArchiveTask {
+  name: string;
+  status: ArchiveTaskStatus;
+  error?: string;
+  groupsFound?: number;
+  standalonesFound?: number;
+}
+
 export interface ProcessingProgress {
   phase: ProcessingPhase;
   currentFile: string;
@@ -57,6 +75,7 @@ export interface ProcessingProgress {
   bytesProcessed: number;
   totalBytes: number;
   percentage: number;
+  overallPercentage: number;
 }
 
 export interface ProcessingResult {
@@ -77,6 +96,8 @@ export type ProcessingAction =
   | { type: "START_MERGING"; totalGroups: number }
   | { type: "START_CLEANUP" }
   | { type: "UPDATE_PROGRESS"; progress: Partial<ProcessingProgress> }
+  | { type: "SET_TASKS"; tasks: ArchiveTask[] }
+  | { type: "UPDATE_TASK"; index: number; task: Partial<ArchiveTask> }
   | { type: "COMPLETE"; result: ProcessingResult }
   | { type: "ERROR"; message: string }
   | { type: "RESET" };
@@ -85,6 +106,7 @@ export interface ProcessingState {
   phase: ProcessingPhase;
   folderUri: string | null;
   progress: ProcessingProgress;
+  tasks: ArchiveTask[];
   scanResult: ScanResult | null;
   result: ProcessingResult | null;
   errorMessage: string | null;

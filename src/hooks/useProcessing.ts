@@ -16,12 +16,14 @@ const initialProgress: ProcessingProgress = {
   bytesProcessed: 0,
   totalBytes: 0,
   percentage: 0,
+  overallPercentage: 0,
 };
 
 const initialState: ProcessingState = {
   phase: "idle",
   folderUri: null,
   progress: initialProgress,
+  tasks: [],
   scanResult: null,
   result: null,
   errorMessage: null,
@@ -76,11 +78,20 @@ function reducer(state: ProcessingState, action: ProcessingAction): ProcessingSt
         ...state,
         progress: { ...state.progress, ...action.progress },
       };
+    case "SET_TASKS":
+      return { ...state, tasks: action.tasks };
+    case "UPDATE_TASK": {
+      const tasks = [...state.tasks];
+      if (tasks[action.index]) {
+        tasks[action.index] = { ...tasks[action.index], ...action.task };
+      }
+      return { ...state, tasks };
+    }
     case "COMPLETE":
       return {
         ...state,
         phase: "done",
-        progress: { ...state.progress, phase: "done", percentage: 100 },
+        progress: { ...state.progress, phase: "done", percentage: 100, overallPercentage: 100 },
         result: action.result,
       };
     case "ERROR":
@@ -162,6 +173,15 @@ export function useProcessing() {
           },
           onProgress: (update) => {
             dispatch({ type: "UPDATE_PROGRESS", progress: update });
+          },
+          onSetTasks: (tasks) => {
+            dispatch({ type: "SET_TASKS", tasks });
+          },
+          onTaskUpdate: (index, task) => {
+            dispatch({ type: "UPDATE_TASK", index, task });
+          },
+          onScanComplete: (scanResult) => {
+            dispatch({ type: "SCAN_COMPLETE", scanResult });
           },
           onError: (_message) => {
             // Non-fatal errors are collected by the pipeline

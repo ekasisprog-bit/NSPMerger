@@ -11,6 +11,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useProcessing } from "../src/hooks/useProcessing";
 import { FolderPicker } from "../src/components/FolderPicker";
 import { ProgressCard } from "../src/components/ProgressCard";
+import { OverallProgress } from "../src/components/OverallProgress";
+import { TaskTable } from "../src/components/TaskTable";
 import { FileList } from "../src/components/FileList";
 
 export default function HomeScreen() {
@@ -112,6 +114,15 @@ export default function HomeScreen() {
             </Text>
           </Pressable>
         )}
+
+        {/* Overall Progress */}
+        <OverallProgress
+          percentage={state.progress.overallPercentage}
+          visible={isProcessing}
+        />
+
+        {/* Task Table */}
+        <TaskTable tasks={state.tasks} />
 
         {/* Progress */}
         <ProgressCard progress={state.progress} />
