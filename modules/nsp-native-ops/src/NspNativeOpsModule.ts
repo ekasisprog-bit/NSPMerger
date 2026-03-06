@@ -50,8 +50,8 @@ declare class NspNativeOpsModuleType extends NativeModule<NspNativeOpsModuleEven
   mergeFiles(inputPaths: string[], outputPath: string): Promise<MergeResult>;
   deleteFiles(paths: string[]): Promise<number>;
   deleteSafDocument(uri: string): Promise<boolean>;
-  getFreeDiskSpace(): number;
-  getCacheDir(): string;
+  getFreeDiskSpace(): Promise<number>;
+  getCacheDir(): Promise<string>;
 }
 
 export default requireNativeModule<NspNativeOpsModuleType>("NspNativeOps");

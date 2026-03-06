@@ -3,10 +3,10 @@ import {
   ProcessingState,
   ProcessingAction,
   ProcessingProgress,
-  ProcessingPhase,
 } from "@/types";
 import { runPipeline } from "@/services/processingPipeline";
 import NspNativeOps from "../../modules/nsp-native-ops";
+import { isZipFile } from "@/utils/patterns";
 
 const initialProgress: ProcessingProgress = {
   phase: "idle",
@@ -96,18 +96,40 @@ function reducer(state: ProcessingState, action: ProcessingAction): ProcessingSt
   }
 }
 
+export interface FolderScanInfo {
+  totalFiles: number;
+  zipFiles: number;
+  fileNames: string[];
+  zipNames: string[];
+}
+
 export function useProcessing() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const abortRef = useRef(false);
+  const folderScanRef = useRef<FolderScanInfo | null>(null);
 
   const pickFolder = useCallback(async () => {
     dispatch({ type: "START_SELECTING" });
     try {
       const uri = await NspNativeOps.pickDirectory();
       dispatch({ type: "FOLDER_SELECTED", folderUri: uri });
+
+      // Immediately scan the folder to show what's inside
+      try {
+        const files = await NspNativeOps.listDirectoryFiles(uri);
+        const zipNames = files.filter((f) => isZipFile(f.name)).map((f) => f.name);
+        folderScanRef.current = {
+          totalFiles: files.length,
+          zipFiles: zipNames.length,
+          fileNames: files.map((f) => f.name),
+          zipNames,
+        };
+      } catch (e: any) {
+        folderScanRef.current = null;
+        dispatch({ type: "ERROR", message: `Cannot read folder: ${e.message}` });
+      }
     } catch (e: any) {
       if (e.code !== "CANCELLED") {
-        dispatch({ type: "ERROR", message: e.message });
+        dispatch({ type: "ERROR", message: `Folder picker failed: ${e.message}` });
       } else {
         dispatch({ type: "RESET" });
       }
@@ -116,30 +138,26 @@ export function useProcessing() {
 
   const startProcessing = useCallback(async () => {
     if (!state.folderUri) return;
-    abortRef.current = false;
 
     try {
       const result = await runPipeline(state.folderUri, {
         onPhaseChange: (phase) => {
-          dispatch({
-            type:
-              phase === "copying"
-                ? "START_COPYING"
-                : phase === "extracting"
-                  ? "START_EXTRACTING"
-                  : phase === "scanning"
-                    ? "START_SCANNING"
-                    : phase === "merging"
-                      ? "START_MERGING"
-                      : "START_CLEANUP",
-            totalFiles: 0,
-            totalGroups: 0,
-          } as any);
+          if (phase === "copying") {
+            dispatch({ type: "START_COPYING", totalFiles: 0 });
+          } else if (phase === "extracting") {
+            dispatch({ type: "START_EXTRACTING", totalFiles: 0 });
+          } else if (phase === "scanning") {
+            dispatch({ type: "START_SCANNING" });
+          } else if (phase === "merging") {
+            dispatch({ type: "START_MERGING", totalGroups: 0 });
+          } else {
+            dispatch({ type: "START_CLEANUP" });
+          }
         },
         onProgress: (update) => {
-          dispatch({ type: "UPDATE_PROGRESS", progress: update as Partial<ProcessingProgress> });
+          dispatch({ type: "UPDATE_PROGRESS", progress: update });
         },
-        onError: (message) => {
+        onError: (_message) => {
           // Non-fatal errors are collected by the pipeline
         },
       });
@@ -151,11 +169,13 @@ export function useProcessing() {
   }, [state.folderUri]);
 
   const reset = useCallback(() => {
+    folderScanRef.current = null;
     dispatch({ type: "RESET" });
   }, []);
 
   return {
     state,
+    folderScan: folderScanRef.current,
     pickFolder,
     startProcessing,
     reset,

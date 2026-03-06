@@ -1,5 +1,5 @@
 import NspNativeOps from "../../modules/nsp-native-ops";
-import { FileEntry, FileGroup, ProcessingResult, ScanResult } from "@/types";
+import { FileEntry, ProcessingResult, ScanResult } from "@/types";
 import { groupFiles } from "./nspGrouper";
 import { isZipFile } from "@/utils/patterns";
 
@@ -24,70 +24,96 @@ export async function runPipeline(
   const errors: string[] = [];
   const mergedFiles: string[] = [];
   const standaloneFiles: string[] = [];
-  const cacheDir = NspNativeOps.getCacheDir();
+  const cacheDir = await NspNativeOps.getCacheDir();
 
   try {
-    // ── Step 1: List files in the selected folder ──
+    // Step 1: List files in the selected folder
     callbacks.onPhaseChange("copying");
-    const allFiles = await NspNativeOps.listDirectoryFiles(folderUri);
+    callbacks.onProgress({ currentFile: "Scanning folder..." });
+
+    let allFiles;
+    try {
+      allFiles = await NspNativeOps.listDirectoryFiles(folderUri);
+    } catch (e: any) {
+      throw new Error(`Failed to list files in folder: ${e.message}`);
+    }
+
+    if (!allFiles || allFiles.length === 0) {
+      throw new Error("Folder is empty or cannot be read.");
+    }
+
     const zipFiles = allFiles.filter((f) => isZipFile(f.name));
 
     if (zipFiles.length === 0) {
-      throw new Error("No zip files found in the selected folder.");
+      const fileNames = allFiles.map((f) => f.name).join(", ");
+      throw new Error(
+        `No .zip files found. Found ${allFiles.length} files: ${fileNames}`
+      );
     }
 
-    // ── Step 2: Check disk space ──
-    const totalZipSize = zipFiles.reduce((sum, f) => sum + f.size, 0);
-    const freeSpace = NspNativeOps.getFreeDiskSpace();
-    // Need roughly 2x largest zip for headroom
+    callbacks.onProgress({
+      currentFile: `Found ${zipFiles.length} zip files`,
+      totalFiles: zipFiles.length,
+    });
+
+    // Step 2: Check disk space
+    const freeSpace = await NspNativeOps.getFreeDiskSpace();
     const largestZip = Math.max(...zipFiles.map((f) => f.size));
-    if (freeSpace < largestZip * 2) {
+    if (largestZip > 0 && freeSpace < largestZip * 2) {
       throw new Error(
         `Insufficient disk space. Need ~${formatBytesSimple(largestZip * 2)} free, have ${formatBytesSimple(freeSpace)}.`
       );
     }
 
-    // ── Step 3: Copy zips to cache & extract ──
-    callbacks.onProgress({ totalFiles: zipFiles.length });
-
+    // Step 3: Copy zips to cache & extract
     const allExtractedFiles: FileEntry[] = [];
 
     for (let i = 0; i < zipFiles.length; i++) {
       const zip = zipFiles[i];
       callbacks.onProgress({
-        currentFile: zip.name,
+        currentFile: `Copying ${zip.name}...`,
         fileIndex: i + 1,
+        totalFiles: zipFiles.length,
         percentage: 0,
       });
 
       // Copy zip to cache
       callbacks.onPhaseChange("copying");
-      const cachedZipPath = await NspNativeOps.copyToCache(zip.uri, zip.name);
+      let cachedZipPath: string;
+      try {
+        cachedZipPath = await NspNativeOps.copyToCache(zip.uri, zip.name);
+      } catch (e: any) {
+        errors.push(`Failed to copy ${zip.name}: ${e.message}`);
+        continue;
+      }
 
       // Extract zip
       callbacks.onPhaseChange("extracting");
+      callbacks.onProgress({
+        currentFile: `Extracting ${zip.name}...`,
+        percentage: 0,
+      });
+
       const extractDir = `${cacheDir}/extract_${i}`;
 
-      // Set up progress listener for extraction
       const extractSub = NspNativeOps.addListener("onExtractProgress", (event) => {
         callbacks.onProgress({
           bytesProcessed: event.bytesExtracted,
           totalBytes: event.totalBytes,
           percentage: event.percentage,
-          currentFile: `${zip.name} → ${event.currentEntry}`,
+          currentFile: `Extracting: ${event.currentEntry}`,
         });
       });
 
       try {
         const result = await NspNativeOps.extractZip(cachedZipPath, extractDir);
 
-        // Collect extracted files as FileEntry objects
         for (const filePath of result.extractedFiles) {
           const fileName = filePath.split("/").pop() || filePath;
           allExtractedFiles.push({
             uri: filePath,
             name: fileName,
-            size: 0, // Size will be read from filesystem during merge
+            size: 0,
           });
         }
       } catch (e: any) {
@@ -97,66 +123,90 @@ export async function runPipeline(
       }
 
       // Delete cached zip immediately to free space
-      await NspNativeOps.deleteFiles([cachedZipPath]);
+      try {
+        await NspNativeOps.deleteFiles([cachedZipPath]);
+      } catch {}
     }
 
-    // ── Step 4: Scan & Group extracted files ──
+    if (allExtractedFiles.length === 0) {
+      throw new Error(
+        `No files were extracted from ${zipFiles.length} zips. Errors: ${errors.join("; ")}`
+      );
+    }
+
+    // Step 4: Scan & Group extracted files
     callbacks.onPhaseChange("scanning");
+    callbacks.onProgress({
+      currentFile: `Scanning ${allExtractedFiles.length} extracted files...`,
+    });
+
     const scanResult: ScanResult = groupFiles(allExtractedFiles);
 
     callbacks.onProgress({
-      currentFile: `Found ${scanResult.groups.length} groups, ${scanResult.standaloneNsps.length} standalone`,
+      currentFile: `Found ${scanResult.groups.length} merge groups, ${scanResult.standaloneNsps.length} standalone NSPs`,
     });
 
-    // ── Step 5: Merge each group ──
-    callbacks.onPhaseChange("merging");
-    callbacks.onProgress({
-      totalFiles: scanResult.groups.length,
-    });
-
-    for (let i = 0; i < scanResult.groups.length; i++) {
-      const group = scanResult.groups[i];
-      callbacks.onProgress({
-        currentFile: group.outputName,
-        fileIndex: i + 1,
-        percentage: 0,
-      });
-
-      const outputPath = `${cacheDir}/${group.outputName}`;
-
-      const mergeSub = NspNativeOps.addListener("onMergeProgress", (event) => {
-        callbacks.onProgress({
-          bytesProcessed: event.bytesWritten,
-          totalBytes: event.totalBytes,
-          percentage: event.percentage,
-          currentFile: `${group.outputName} (${event.currentPart})`,
-        });
-      });
-
-      try {
-        // Merge parts (they're already local filesystem paths from extraction)
-        const inputPaths = group.parts.map((p) => p.uri);
-        await NspNativeOps.mergeFiles(inputPaths, outputPath);
-
-        // Copy merged file back to the source folder via SAF
-        await NspNativeOps.copyFromCache(outputPath, folderUri, group.outputName);
-        mergedFiles.push(group.outputName);
-
-        // Delete merged cache file
-        await NspNativeOps.deleteFiles([outputPath]);
-      } catch (e: any) {
-        errors.push(`Failed to merge ${group.outputName}: ${e.message}`);
-      } finally {
-        mergeSub.remove();
-      }
-
-      // Delete source parts
-      const partPaths = group.parts.map((p) => p.uri);
-      await NspNativeOps.deleteFiles(partPaths);
+    if (scanResult.groups.length === 0 && scanResult.standaloneNsps.length === 0) {
+      const extractedNames = allExtractedFiles.map((f) => f.name).join(", ");
+      throw new Error(
+        `No NSP parts or standalone NSPs found in extracted files. Files found: ${extractedNames}`
+      );
     }
 
-    // ── Step 6: Move standalone NSPs back ──
+    // Step 5: Merge each group
+    if (scanResult.groups.length > 0) {
+      callbacks.onPhaseChange("merging");
+      callbacks.onProgress({
+        totalFiles: scanResult.groups.length,
+        currentFile: `Merging ${scanResult.groups.length} groups...`,
+      });
+
+      for (let i = 0; i < scanResult.groups.length; i++) {
+        const group = scanResult.groups[i];
+        callbacks.onProgress({
+          currentFile: `Merging: ${group.outputName}`,
+          fileIndex: i + 1,
+          percentage: 0,
+        });
+
+        const outputPath = `${cacheDir}/${group.outputName}`;
+
+        const mergeSub = NspNativeOps.addListener("onMergeProgress", (event) => {
+          callbacks.onProgress({
+            bytesProcessed: event.bytesWritten,
+            totalBytes: event.totalBytes,
+            percentage: event.percentage,
+            currentFile: `Merging: ${group.outputName} (${event.currentPart})`,
+          });
+        });
+
+        try {
+          const inputPaths = group.parts.map((p) => p.uri);
+          await NspNativeOps.mergeFiles(inputPaths, outputPath);
+
+          // Copy merged file back to the source folder via SAF
+          await NspNativeOps.copyFromCache(outputPath, folderUri, group.outputName);
+          mergedFiles.push(group.outputName);
+
+          // Delete merged cache file
+          await NspNativeOps.deleteFiles([outputPath]);
+        } catch (e: any) {
+          errors.push(`Failed to merge ${group.outputName}: ${e.message}`);
+        } finally {
+          mergeSub.remove();
+        }
+
+        // Delete source parts
+        try {
+          const partPaths = group.parts.map((p) => p.uri);
+          await NspNativeOps.deleteFiles(partPaths);
+        } catch {}
+      }
+    }
+
+    // Step 6: Move standalone NSPs back to SAF folder
     for (const nsp of scanResult.standaloneNsps) {
+      callbacks.onProgress({ currentFile: `Copying: ${nsp.name}` });
       try {
         await NspNativeOps.copyFromCache(nsp.uri, folderUri, nsp.name);
         standaloneFiles.push(nsp.name);
@@ -165,16 +215,18 @@ export async function runPipeline(
       }
     }
 
-    // ── Step 7: Cleanup ──
+    // Step 7: Cleanup
     callbacks.onPhaseChange("cleanup");
-    await NspNativeOps.deleteFiles([cacheDir]);
+    callbacks.onProgress({ currentFile: "Cleaning up cache..." });
+    try {
+      await NspNativeOps.deleteFiles([cacheDir]);
+    } catch {}
 
     // Delete original zip files from SAF folder
     for (const zip of zipFiles) {
       try {
         await NspNativeOps.deleteSafDocument(zip.uri);
       } catch (e: any) {
-        // Non-critical: original zips can be manually deleted
         errors.push(`Could not delete original zip ${zip.name}: ${e.message}`);
       }
     }

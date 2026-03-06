@@ -14,10 +14,10 @@ import { ProgressCard } from "../src/components/ProgressCard";
 import { FileList } from "../src/components/FileList";
 
 export default function HomeScreen() {
-  const { state, pickFolder, startProcessing, reset } = useProcessing();
+  const { state, folderScan, pickFolder, startProcessing, reset } = useProcessing();
 
   const isProcessing = !["idle", "done", "error"].includes(state.phase);
-  const canStart = state.folderUri && !isProcessing && state.phase !== "done";
+  const canStart = state.folderUri != null && !isProcessing && state.phase !== "done";
 
   const handleStart = () => {
     Alert.alert(
@@ -52,8 +52,54 @@ export default function HomeScreen() {
           disabled={isProcessing}
         />
 
+        {/* Folder Scan Results */}
+        {folderScan != null && state.phase === "idle" && (
+          <View style={styles.scanCard}>
+            <Text style={styles.scanTitle}>Folder Contents</Text>
+            <View style={styles.scanRow}>
+              <Text style={styles.scanLabel}>Total files</Text>
+              <Text style={styles.scanValue}>{folderScan.totalFiles}</Text>
+            </View>
+            <View style={styles.scanRow}>
+              <Text style={styles.scanLabel}>Zip files</Text>
+              <Text style={[
+                styles.scanValue,
+                folderScan.zipFiles === 0 && styles.scanValueError,
+              ]}>
+                {folderScan.zipFiles}
+              </Text>
+            </View>
+            {folderScan.zipFiles > 0 && (
+              <View style={styles.scanFiles}>
+                {folderScan.zipNames.map((name) => (
+                  <Text key={name} style={styles.scanFileName} numberOfLines={1}>
+                    {name}
+                  </Text>
+                ))}
+              </View>
+            )}
+            {folderScan.zipFiles === 0 && folderScan.totalFiles > 0 && (
+              <View style={styles.scanFiles}>
+                <Text style={styles.scanWarning}>
+                  No .zip files found. Files in folder:
+                </Text>
+                {folderScan.fileNames.slice(0, 10).map((name) => (
+                  <Text key={name} style={styles.scanFileName} numberOfLines={1}>
+                    {name}
+                  </Text>
+                ))}
+                {folderScan.fileNames.length > 10 && (
+                  <Text style={styles.scanMeta}>
+                    ...and {folderScan.fileNames.length - 10} more
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Start Button */}
-        {canStart && (
+        {canStart && folderScan != null && folderScan.zipFiles > 0 && (
           <Pressable
             style={({ pressed }) => [
               styles.startButton,
@@ -61,7 +107,9 @@ export default function HomeScreen() {
             ]}
             onPress={handleStart}
           >
-            <Text style={styles.startButtonText}>Start Processing</Text>
+            <Text style={styles.startButtonText}>
+              Start Processing ({folderScan.zipFiles} zips)
+            </Text>
           </Pressable>
         )}
 
@@ -69,7 +117,7 @@ export default function HomeScreen() {
         <ProgressCard progress={state.progress} />
 
         {/* Error */}
-        {state.phase === "error" && state.errorMessage && (
+        {state.phase === "error" && state.errorMessage != null && (
           <View style={styles.errorCard}>
             <Text style={styles.errorTitle}>Error</Text>
             <Text style={styles.errorMessage}>{state.errorMessage}</Text>
@@ -122,6 +170,62 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#64748B",
     marginTop: 6,
+  },
+  scanCard: {
+    backgroundColor: "#1E1E2E",
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#2A2A3E",
+  },
+  scanTitle: {
+    color: "#94A3B8",
+    fontSize: 13,
+    fontWeight: "600",
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    marginBottom: 12,
+  },
+  scanRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 4,
+  },
+  scanLabel: {
+    color: "#64748B",
+    fontSize: 14,
+  },
+  scanValue: {
+    color: "#E2E8F0",
+    fontSize: 14,
+    fontWeight: "600",
+    fontVariant: ["tabular-nums"],
+  },
+  scanValueError: {
+    color: "#EF4444",
+  },
+  scanFiles: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#2A2A3E",
+  },
+  scanFileName: {
+    color: "#7C3AED",
+    fontSize: 13,
+    fontFamily: "monospace",
+    paddingVertical: 3,
+  },
+  scanWarning: {
+    color: "#F59E0B",
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  scanMeta: {
+    color: "#64748B",
+    fontSize: 12,
+    marginTop: 4,
   },
   startButton: {
     backgroundColor: "#7C3AED",

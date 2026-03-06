@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Environment
 import android.os.StatFs
 import android.provider.DocumentsContract
+import android.util.Log
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -17,6 +18,7 @@ import java.io.FileOutputStream
 class NspNativeOpsModule : Module() {
 
     companion object {
+        private const val TAG = "NspNativeOps"
         private const val PICK_DIRECTORY_REQUEST = 1001
         private const val PROGRESS_THROTTLE_MS = 500L
     }
@@ -32,7 +34,10 @@ class NspNativeOpsModule : Module() {
 
         AsyncFunction("pickDirectory") { promise: Promise ->
             val activity = appContext.currentActivity
-                ?: throw CodedException("NO_ACTIVITY", "No current activity", null)
+            if (activity == null) {
+                promise.reject(CodedException("NO_ACTIVITY", "No current activity", null))
+                return@AsyncFunction
+            }
 
             pendingPickPromise = promise
 
@@ -44,39 +49,61 @@ class NspNativeOpsModule : Module() {
                 )
             }
 
-            activity.startActivityForResult(intent, PICK_DIRECTORY_REQUEST)
+            try {
+                activity.startActivityForResult(intent, PICK_DIRECTORY_REQUEST)
+                Log.d(TAG, "pickDirectory: SAF intent launched")
+            } catch (e: Exception) {
+                pendingPickPromise = null
+                promise.reject(CodedException("LAUNCH_FAILED", "Failed to launch picker: ${e.message}", e))
+            }
         }
 
         OnActivityResult { _, payload ->
-            val promise = pendingPickPromise ?: return@OnActivityResult
-            pendingPickPromise = null
+            Log.d(TAG, "OnActivityResult: requestCode=${payload.requestCode}, resultCode=${payload.resultCode}, data=${payload.data}")
 
-            if (payload.requestCode != PICK_DIRECTORY_REQUEST) return@OnActivityResult
+            val promise = pendingPickPromise ?: run {
+                Log.d(TAG, "OnActivityResult: no pending promise, ignoring")
+                return@OnActivityResult
+            }
 
-            if (payload.resultCode != Activity.RESULT_OK || payload.data == null) {
+            // Don't check requestCode — React Native may modify it.
+            // Instead, check if we have a pending promise and a valid tree URI result.
+
+            if (payload.resultCode != Activity.RESULT_OK) {
+                pendingPickPromise = null
                 promise.reject(CodedException("CANCELLED", "Directory picker cancelled", null))
                 return@OnActivityResult
             }
 
             val treeUri = payload.data?.data
             if (treeUri == null) {
-                promise.reject(CodedException("NO_URI", "No URI returned", null))
+                pendingPickPromise = null
+                promise.reject(CodedException("NO_URI", "No URI returned from picker", null))
                 return@OnActivityResult
             }
 
             // Persist permissions
-            val contentResolver = appContext.reactContext?.contentResolver
-            contentResolver?.takePersistableUriPermission(
-                treeUri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            try {
+                val contentResolver = appContext.reactContext?.contentResolver
+                contentResolver?.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                Log.d(TAG, "pickDirectory: persisted URI permissions for $treeUri")
+            } catch (e: Exception) {
+                Log.w(TAG, "pickDirectory: failed to persist permissions: ${e.message}")
+                // Non-fatal — temporary permissions should still work
+            }
 
+            pendingPickPromise = null
             promise.resolve(treeUri.toString())
+            Log.d(TAG, "pickDirectory: resolved with $treeUri")
         }
 
         // ── List files in a SAF directory ──
 
         AsyncFunction("listDirectoryFiles") { uriString: String ->
+            Log.d(TAG, "listDirectoryFiles: $uriString")
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             val treeUri = Uri.parse(uriString)
@@ -85,7 +112,7 @@ class NspNativeOpsModule : Module() {
 
             val files = mutableListOf<Map<String, Any>>()
 
-            context.contentResolver.query(
+            val cursor = context.contentResolver.query(
                 childrenUri,
                 arrayOf(
                     DocumentsContract.Document.COLUMN_DOCUMENT_ID,
@@ -94,29 +121,43 @@ class NspNativeOpsModule : Module() {
                     DocumentsContract.Document.COLUMN_MIME_TYPE
                 ),
                 null, null, null
-            )?.use { cursor ->
-                val idIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                val nameIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-                val sizeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
-                val mimeIndex = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            )
 
-                while (cursor.moveToNext()) {
-                    val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, cursor.getString(idIndex))
+            if (cursor == null) {
+                Log.w(TAG, "listDirectoryFiles: cursor is null for $childrenUri")
+                return@AsyncFunction files
+            }
+
+            cursor.use {
+                val idIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+                val nameIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                val sizeIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
+                val mimeIndex = it.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+
+                while (it.moveToNext()) {
+                    val name = it.getString(nameIndex) ?: continue
+                    val size = if (it.isNull(sizeIndex)) 0L else it.getLong(sizeIndex)
+                    val mimeType = it.getString(mimeIndex) ?: "application/octet-stream"
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, it.getString(idIndex))
+
                     files.add(mapOf(
                         "uri" to docUri.toString(),
-                        "name" to cursor.getString(nameIndex),
-                        "size" to cursor.getLong(sizeIndex),
-                        "mimeType" to (cursor.getString(mimeIndex) ?: "application/octet-stream")
+                        "name" to name,
+                        "size" to size.toDouble(), // JS numbers are doubles
+                        "mimeType" to mimeType
                     ))
+                    Log.d(TAG, "listDirectoryFiles: found file: $name (size=$size, mime=$mimeType)")
                 }
             }
 
+            Log.d(TAG, "listDirectoryFiles: found ${files.size} files total")
             files
         }
 
         // ── Copy file from SAF to cache ──
 
         AsyncFunction("copyToCache") { uriString: String, fileName: String ->
+            Log.d(TAG, "copyToCache: $fileName from $uriString")
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             val uri = Uri.parse(uriString)
@@ -131,14 +172,16 @@ class NspNativeOpsModule : Module() {
                         output.write(buffer, 0, bytesRead)
                     }
                 }
-            } ?: throw CodedException("COPY_FAILED", "Cannot open input stream for $uriString", null)
+            } ?: throw CodedException("COPY_FAILED", "Cannot open input stream for $fileName", null)
 
+            Log.d(TAG, "copyToCache: done -> ${cacheFile.absolutePath} (${cacheFile.length()} bytes)")
             cacheFile.absolutePath
         }
 
         // ── Copy file from cache back to SAF directory ──
 
         AsyncFunction("copyFromCache") { cachePath: String, destTreeUriString: String, fileName: String ->
+            Log.d(TAG, "copyFromCache: $fileName to SAF")
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             val treeUri = Uri.parse(destTreeUriString)
@@ -161,18 +204,24 @@ class NspNativeOpsModule : Module() {
                         output.write(buffer, 0, bytesRead)
                     }
                 }
-            } ?: throw CodedException("COPY_FAILED", "Cannot open output stream", null)
+            } ?: throw CodedException("COPY_FAILED", "Cannot open output stream for $fileName", null)
 
+            Log.d(TAG, "copyFromCache: done -> $newDocUri")
             newDocUri.toString()
         }
 
         // ── Extract zip file ──
 
         AsyncFunction("extractZip") { zipPath: String, destDir: String ->
+            Log.d(TAG, "extractZip: $zipPath -> $destDir")
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
 
             val zipFile = File(zipPath)
+            if (!zipFile.exists()) {
+                throw CodedException("FILE_NOT_FOUND", "Zip file not found: $zipPath", null)
+            }
+
             val destDirectory = File(destDir)
             val extractor = ZipExtractor(context)
 
@@ -188,8 +237,8 @@ class NspNativeOpsModule : Module() {
                         if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
                             lastProgressTime = now
                             sendEvent("onExtractProgress", mapOf(
-                                "bytesExtracted" to bytesExtracted,
-                                "totalBytes" to totalBytes,
+                                "bytesExtracted" to bytesExtracted.toDouble(),
+                                "totalBytes" to totalBytes.toDouble(),
                                 "currentEntry" to currentEntry,
                                 "percentage" to if (totalBytes > 0) (bytesExtracted * 100.0 / totalBytes) else 0.0
                             ))
@@ -198,15 +247,18 @@ class NspNativeOpsModule : Module() {
                 }
             )
 
+            Log.d(TAG, "extractZip: extracted ${result.extractedFiles.size} files, ${result.totalBytes} bytes")
+
             mapOf(
                 "extractedFiles" to result.extractedFiles,
-                "totalBytes" to result.totalBytes
+                "totalBytes" to result.totalBytes.toDouble()
             )
         }
 
         // ── Merge files ──
 
         AsyncFunction("mergeFiles") { inputPaths: List<String>, outputPath: String ->
+            Log.d(TAG, "mergeFiles: ${inputPaths.size} parts -> $outputPath")
             val merger = FileMerger()
             var lastProgressTime = 0L
 
@@ -219,8 +271,8 @@ class NspNativeOpsModule : Module() {
                         if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
                             lastProgressTime = now
                             sendEvent("onMergeProgress", mapOf(
-                                "bytesWritten" to bytesWritten,
-                                "totalBytes" to totalBytes,
+                                "bytesWritten" to bytesWritten.toDouble(),
+                                "totalBytes" to totalBytes.toDouble(),
                                 "currentPart" to currentPart,
                                 "percentage" to if (totalBytes > 0) (bytesWritten * 100.0 / totalBytes) else 0.0
                             ))
@@ -229,9 +281,11 @@ class NspNativeOpsModule : Module() {
                 }
             )
 
+            Log.d(TAG, "mergeFiles: done, ${result.totalBytes} bytes")
+
             mapOf(
                 "outputPath" to result.outputPath,
-                "totalBytes" to result.totalBytes
+                "totalBytes" to result.totalBytes.toDouble()
             )
         }
 
@@ -250,6 +304,7 @@ class NspNativeOpsModule : Module() {
                     deleted++
                 }
             }
+            Log.d(TAG, "deleteFiles: deleted $deleted of ${paths.size}")
             deleted
         }
 
@@ -259,19 +314,24 @@ class NspNativeOpsModule : Module() {
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             val uri = Uri.parse(uriString)
-            DocumentsContract.deleteDocument(context.contentResolver, uri)
+            try {
+                DocumentsContract.deleteDocument(context.contentResolver, uri)
+            } catch (e: Exception) {
+                Log.w(TAG, "deleteSafDocument: failed for $uriString: ${e.message}")
+                false
+            }
         }
 
         // ── Get free disk space ──
 
-        Function("getFreeDiskSpace") {
+        AsyncFunction("getFreeDiskSpace") {
             val stat = StatFs(Environment.getDataDirectory().path)
-            stat.availableBytes
+            stat.availableBytes.toDouble()
         }
 
         // ── Get cache directory ──
 
-        Function("getCacheDir") {
+        AsyncFunction("getCacheDir") {
             val context = appContext.reactContext
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             File(context.cacheDir, "nsp_work").apply { mkdirs() }.absolutePath
