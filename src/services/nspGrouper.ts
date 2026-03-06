@@ -42,15 +42,16 @@ export function groupFiles(files: FileEntry[]): ScanResult {
     parts.sort((a, b) => a.index - b.index);
 
     // Validate sequential numbering (0, 1, 2, ...)
-    const isSequential = parts.every((part, i) => part.index === i);
-    if (!isSequential) {
-      // Check if they start from 0 and have gaps
-      const indices = parts.map((p) => p.index);
-      const hasGaps = indices.some((idx, i) => i > 0 && idx !== indices[i - 1] + 1);
-      if (hasGaps) {
-        // Still allow it but parts are in order
-        console.warn(`Group ${key} has non-sequential parts: ${indices.join(", ")}`);
-      }
+    const indices = parts.map((p) => p.index);
+    const hasGaps = indices.some((idx, i) => i > 0 && idx !== indices[i - 1] + 1);
+    const startsFromZero = indices[0] === 0;
+
+    if (hasGaps || !startsFromZero) {
+      // Skip groups with missing parts — merging would produce corrupt output
+      unknownFiles.push(
+        ...parts.map((p) => `${p.name} (skipped: incomplete set, indices: ${indices.join(",")})`)
+      );
+      continue;
     }
 
     const outputName = getOutputName(pattern.baseName, pattern.patternType);

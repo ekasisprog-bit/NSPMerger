@@ -1,4 +1,4 @@
-import { useReducer, useCallback, useRef } from "react";
+import { useReducer, useCallback, useState } from "react";
 import {
   ProcessingState,
   ProcessingAction,
@@ -6,7 +6,7 @@ import {
 } from "@/types";
 import { runPipeline } from "@/services/processingPipeline";
 import NspNativeOps from "../../modules/nsp-native-ops";
-import { isZipFile } from "@/utils/patterns";
+import { isArchiveFile } from "@/utils/patterns";
 
 const initialProgress: ProcessingProgress = {
   phase: "idle",
@@ -98,14 +98,14 @@ function reducer(state: ProcessingState, action: ProcessingAction): ProcessingSt
 
 export interface FolderScanInfo {
   totalFiles: number;
-  zipFiles: number;
+  archiveFiles: number;
   fileNames: string[];
-  zipNames: string[];
+  archiveNames: string[];
 }
 
 export function useProcessing() {
   const [state, dispatch] = useReducer(reducer, initialState);
-  const folderScanRef = useRef<FolderScanInfo | null>(null);
+  const [folderScan, setFolderScan] = useState<FolderScanInfo | null>(null);
 
   const pickFolder = useCallback(async () => {
     dispatch({ type: "START_SELECTING" });
@@ -116,15 +116,15 @@ export function useProcessing() {
       // Immediately scan the folder to show what's inside
       try {
         const files = await NspNativeOps.listDirectoryFiles(uri);
-        const zipNames = files.filter((f) => isZipFile(f.name)).map((f) => f.name);
-        folderScanRef.current = {
+        const archiveNames = files.filter((f) => isArchiveFile(f.name)).map((f) => f.name);
+        setFolderScan({
           totalFiles: files.length,
-          zipFiles: zipNames.length,
+          archiveFiles: archiveNames.length,
           fileNames: files.map((f) => f.name),
-          zipNames,
-        };
+          archiveNames,
+        });
       } catch (e: any) {
-        folderScanRef.current = null;
+        setFolderScan(null);
         dispatch({ type: "ERROR", message: `Cannot read folder: ${e.message}` });
       }
     } catch (e: any) {
@@ -169,13 +169,13 @@ export function useProcessing() {
   }, [state.folderUri]);
 
   const reset = useCallback(() => {
-    folderScanRef.current = null;
+    setFolderScan(null);
     dispatch({ type: "RESET" });
   }, []);
 
   return {
     state,
-    folderScan: folderScanRef.current,
+    folderScan,
     pickFolder,
     startProcessing,
     reset,

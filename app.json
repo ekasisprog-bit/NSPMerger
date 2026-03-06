@@ -23,6 +23,9 @@
     },
     "plugins": [
       "expo-router"
-    ]
+    ],
+    "ios": {
+      "bundleIdentifier": "com.nspmerger.app"
+    }
   }
 }

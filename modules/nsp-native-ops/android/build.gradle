@@ -16,3 +16,7 @@ android {
     abortOnError false
   }
 }
+
+dependencies {
+  implementation 'com.github.junrar:junrar:7.5.5'
+}

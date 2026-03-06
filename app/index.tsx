@@ -22,7 +22,7 @@ export default function HomeScreen() {
   const handleStart = () => {
     Alert.alert(
       "Start Processing",
-      "This will extract all zip files, merge split NSP parts, copy results back to the selected folder, and clean up. Continue?",
+      "This will extract all archive files, merge split NSP parts, and save the merged NSP files to the selected folder. Original files will be kept. Continue?",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Start", onPress: startProcessing },
@@ -61,27 +61,27 @@ export default function HomeScreen() {
               <Text style={styles.scanValue}>{folderScan.totalFiles}</Text>
             </View>
             <View style={styles.scanRow}>
-              <Text style={styles.scanLabel}>Zip files</Text>
+              <Text style={styles.scanLabel}>Archive files</Text>
               <Text style={[
                 styles.scanValue,
-                folderScan.zipFiles === 0 && styles.scanValueError,
+                folderScan.archiveFiles === 0 && styles.scanValueError,
               ]}>
-                {folderScan.zipFiles}
+                {folderScan.archiveFiles}
               </Text>
             </View>
-            {folderScan.zipFiles > 0 && (
+            {folderScan.archiveFiles > 0 && (
               <View style={styles.scanFiles}>
-                {folderScan.zipNames.map((name) => (
+                {folderScan.archiveNames.map((name) => (
                   <Text key={name} style={styles.scanFileName} numberOfLines={1}>
                     {name}
                   </Text>
                 ))}
               </View>
             )}
-            {folderScan.zipFiles === 0 && folderScan.totalFiles > 0 && (
+            {folderScan.archiveFiles === 0 && folderScan.totalFiles > 0 && (
               <View style={styles.scanFiles}>
                 <Text style={styles.scanWarning}>
-                  No .zip files found. Files in folder:
+                  No archive files (.zip/.rar) found. Files in folder:
                 </Text>
                 {folderScan.fileNames.slice(0, 10).map((name) => (
                   <Text key={name} style={styles.scanFileName} numberOfLines={1}>
@@ -99,7 +99,7 @@ export default function HomeScreen() {
         )}
 
         {/* Start Button */}
-        {canStart && folderScan != null && folderScan.zipFiles > 0 && (
+        {canStart && folderScan != null && folderScan.archiveFiles > 0 && (
           <Pressable
             style={({ pressed }) => [
               styles.startButton,
@@ -108,7 +108,7 @@ export default function HomeScreen() {
             onPress={handleStart}
           >
             <Text style={styles.startButtonText}>
-              Start Processing ({folderScan.zipFiles} zips)
+              Start Processing ({folderScan.archiveFiles} archives)
             </Text>
           </Pressable>
         )}

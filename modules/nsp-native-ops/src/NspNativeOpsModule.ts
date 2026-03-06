@@ -47,6 +47,7 @@ declare class NspNativeOpsModuleType extends NativeModule<NspNativeOpsModuleEven
     fileName: string
   ): Promise<string>;
   extractZip(zipPath: string, destDir: string): Promise<ExtractResult>;
+  extractRar(rarPath: string, destDir: string): Promise<ExtractResult>;
   mergeFiles(inputPaths: string[], outputPath: string): Promise<MergeResult>;
   deleteFiles(paths: string[]): Promise<number>;
   deleteSafDocument(uri: string): Promise<boolean>;

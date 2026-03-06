@@ -255,6 +255,48 @@ class NspNativeOpsModule : Module() {
             )
         }
 
+        // ── Extract RAR file ──
+
+        AsyncFunction("extractRar") { rarPath: String, destDir: String ->
+            Log.d(TAG, "extractRar: $rarPath -> $destDir")
+
+            val rarFile = File(rarPath)
+            if (!rarFile.exists()) {
+                throw CodedException("FILE_NOT_FOUND", "RAR file not found: $rarPath", null)
+            }
+
+            val destDirectory = File(destDir)
+            val extractor = RarExtractor()
+
+            var lastProgressTime = 0L
+
+            val result = extractor.extract(
+                rarFile,
+                destDirectory,
+                object : RarExtractor.ProgressListener {
+                    override fun onProgress(bytesExtracted: Long, totalBytes: Long, currentEntry: String) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressTime >= PROGRESS_THROTTLE_MS) {
+                            lastProgressTime = now
+                            sendEvent("onExtractProgress", mapOf(
+                                "bytesExtracted" to bytesExtracted.toDouble(),
+                                "totalBytes" to totalBytes.toDouble(),
+                                "currentEntry" to currentEntry,
+                                "percentage" to if (totalBytes > 0) (bytesExtracted * 100.0 / totalBytes) else 0.0
+                            ))
+                        }
+                    }
+                }
+            )
+
+            Log.d(TAG, "extractRar: extracted ${result.extractedFiles.size} files, ${result.totalBytes} bytes")
+
+            mapOf(
+                "extractedFiles" to result.extractedFiles,
+                "totalBytes" to result.totalBytes.toDouble()
+            )
+        }
+
         // ── Merge files ──
 
         AsyncFunction("mergeFiles") { inputPaths: List<String>, outputPath: String ->
@@ -292,9 +334,17 @@ class NspNativeOpsModule : Module() {
         // ── Delete files ──
 
         AsyncFunction("deleteFiles") { paths: List<String> ->
+            val context = appContext.reactContext
+                ?: throw CodedException("NO_CONTEXT", "No React context", null)
+            val cacheRoot = context.cacheDir.canonicalPath
             var deleted = 0
             for (path in paths) {
                 val file = File(path)
+                // Only allow deletion of files under the app cache directory
+                if (!file.canonicalPath.startsWith(cacheRoot)) {
+                    Log.w(TAG, "deleteFiles: refusing to delete outside cache: $path")
+                    continue
+                }
                 if (file.exists()) {
                     if (file.isDirectory) {
                         file.deleteRecursively()

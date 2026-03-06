@@ -1,7 +1,7 @@
 import NspNativeOps from "../../modules/nsp-native-ops";
 import { FileEntry, ProcessingResult, ScanResult } from "@/types";
 import { groupFiles } from "./nspGrouper";
-import { isZipFile } from "@/utils/patterns";
+import { isZipFile, isRarFile, isArchiveFile } from "@/utils/patterns";
 
 interface PipelineCallbacks {
   onPhaseChange: (phase: string) => void;
@@ -42,55 +42,57 @@ export async function runPipeline(
       throw new Error("Folder is empty or cannot be read.");
     }
 
-    const zipFiles = allFiles.filter((f) => isZipFile(f.name));
+    const archiveFiles = allFiles.filter((f) => isArchiveFile(f.name));
 
-    if (zipFiles.length === 0) {
+    if (archiveFiles.length === 0) {
       const fileNames = allFiles.map((f) => f.name).join(", ");
       throw new Error(
-        `No .zip files found. Found ${allFiles.length} files: ${fileNames}`
+        `No archive files (.zip/.rar) found. Found ${allFiles.length} files: ${fileNames}`
       );
     }
 
     callbacks.onProgress({
-      currentFile: `Found ${zipFiles.length} zip files`,
-      totalFiles: zipFiles.length,
+      currentFile: `Found ${archiveFiles.length} archive files`,
+      totalFiles: archiveFiles.length,
     });
 
     // Step 2: Check disk space
     const freeSpace = await NspNativeOps.getFreeDiskSpace();
-    const largestZip = Math.max(...zipFiles.map((f) => f.size));
-    if (largestZip > 0 && freeSpace < largestZip * 2) {
+    const largestArchive = Math.max(...archiveFiles.map((f) => f.size));
+    if (largestArchive > 0 && freeSpace < largestArchive * 2) {
       throw new Error(
-        `Insufficient disk space. Need ~${formatBytesSimple(largestZip * 2)} free, have ${formatBytesSimple(freeSpace)}.`
+        `Insufficient disk space. Need ~${formatBytesSimple(largestArchive * 2)} free, have ${formatBytesSimple(freeSpace)}.`
       );
     }
 
     // Step 3: Copy zips to cache & extract
     const allExtractedFiles: FileEntry[] = [];
 
-    for (let i = 0; i < zipFiles.length; i++) {
-      const zip = zipFiles[i];
+    for (let i = 0; i < archiveFiles.length; i++) {
+      const archive = archiveFiles[i];
+      const archiveIsRar = isRarFile(archive.name);
+
       callbacks.onProgress({
-        currentFile: `Copying ${zip.name}...`,
+        currentFile: `Copying ${archive.name}...`,
         fileIndex: i + 1,
-        totalFiles: zipFiles.length,
+        totalFiles: archiveFiles.length,
         percentage: 0,
       });
 
-      // Copy zip to cache
+      // Copy archive to cache
       callbacks.onPhaseChange("copying");
-      let cachedZipPath: string;
+      let cachedPath: string;
       try {
-        cachedZipPath = await NspNativeOps.copyToCache(zip.uri, zip.name);
+        cachedPath = await NspNativeOps.copyToCache(archive.uri, archive.name);
       } catch (e: any) {
-        errors.push(`Failed to copy ${zip.name}: ${e.message}`);
+        errors.push(`Failed to copy ${archive.name}: ${e.message}`);
         continue;
       }
 
-      // Extract zip
+      // Extract archive
       callbacks.onPhaseChange("extracting");
       callbacks.onProgress({
-        currentFile: `Extracting ${zip.name}...`,
+        currentFile: `Extracting ${archive.name}...`,
         percentage: 0,
       });
 
@@ -106,31 +108,40 @@ export async function runPipeline(
       });
 
       try {
-        const result = await NspNativeOps.extractZip(cachedZipPath, extractDir);
+        const result = archiveIsRar
+          ? await NspNativeOps.extractRar(cachedPath, extractDir)
+          : await NspNativeOps.extractZip(cachedPath, extractDir);
 
         for (const filePath of result.extractedFiles) {
-          const fileName = filePath.split("/").pop() || filePath;
+          const pathParts = filePath.split("/");
+          const fileName = pathParts.pop() || filePath;
+          // Include parent dir in name for bare-numbered files (00, 01)
+          // to prevent cross-archive contamination during grouping
+          const parentDir = pathParts.pop() || "";
+          const qualifiedName = /^\d+$/.test(fileName) && parentDir
+            ? `${parentDir}/${fileName}`
+            : fileName;
           allExtractedFiles.push({
             uri: filePath,
-            name: fileName,
+            name: qualifiedName,
             size: 0,
           });
         }
       } catch (e: any) {
-        errors.push(`Failed to extract ${zip.name}: ${e.message}`);
+        errors.push(`Failed to extract ${archive.name}: ${e.message}`);
       } finally {
         extractSub.remove();
       }
 
-      // Delete cached zip immediately to free space
+      // Delete cached archive immediately to free space
       try {
-        await NspNativeOps.deleteFiles([cachedZipPath]);
+        await NspNativeOps.deleteFiles([cachedPath]);
       } catch {}
     }
 
     if (allExtractedFiles.length === 0) {
       throw new Error(
-        `No files were extracted from ${zipFiles.length} zips. Errors: ${errors.join("; ")}`
+        `No files were extracted from ${archiveFiles.length} archives. Errors: ${errors.join("; ")}`
       );
     }
 
@@ -222,14 +233,7 @@ export async function runPipeline(
       await NspNativeOps.deleteFiles([cacheDir]);
     } catch {}
 
-    // Delete original zip files from SAF folder
-    for (const zip of zipFiles) {
-      try {
-        await NspNativeOps.deleteSafDocument(zip.uri);
-      } catch (e: any) {
-        errors.push(`Could not delete original zip ${zip.name}: ${e.message}`);
-      }
-    }
+    // Keep original archive files — user wants to retain them
 
     const totalSize =
       scanResult.groups.reduce((sum, g) => sum + g.totalSize, 0) +

@@ -46,11 +46,11 @@ const PATTERNS: Array<{
     getOutputName: (baseName) => baseName,
   },
   {
-    // 00, 01, 02 (bare numbered files)
+    // parentDir/00, parentDir/01 (bare numbered files, qualified by parent)
     type: "bare_numbered",
-    regex: /^(\d+)$/,
-    getBaseName: (_m) => "__bare__",
-    getIndex: (m) => parseInt(m[1], 10),
+    regex: /^(?:(.+)\/)?(\d+)$/,
+    getBaseName: (m) => m[1] || "__bare__",
+    getIndex: (m) => parseInt(m[2], 10),
     getOutputName: (_baseName) => "merged.nsp",
   },
 ];
@@ -76,6 +76,14 @@ export function getOutputName(baseName: string, patternType: PatternType): strin
 
 export function isZipFile(fileName: string): boolean {
   return /\.zip$/i.test(fileName);
+}
+
+export function isRarFile(fileName: string): boolean {
+  return /\.rar$/i.test(fileName);
+}
+
+export function isArchiveFile(fileName: string): boolean {
+  return isZipFile(fileName) || isRarFile(fileName);
 }
 
 export function isNspFile(fileName: string): boolean {
