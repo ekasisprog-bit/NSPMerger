@@ -35,7 +35,15 @@ const PATTERNS: Array<{
     regex: /^(.+)\.xc(\d+)$/i,
     getBaseName: (m) => m[1],
     getIndex: (m) => parseInt(m[2], 10),
-    getOutputName: (baseName) => `${baseName}.nsp`,
+    getOutputName: (baseName) => `${baseName}.xci`,
+  },
+  {
+    // game.xci.00, game.xci.01
+    type: "xci_dotted",
+    regex: /^(.+\.xci)\.(\d+)$/i,
+    getBaseName: (m) => m[1],
+    getIndex: (m) => parseInt(m[2], 10),
+    getOutputName: (baseName) => baseName,
   },
   {
     // game.nsp.part0, game.nsp.part1
@@ -72,6 +80,15 @@ export function matchPattern(fileName: string): PatternMatch | null {
 export function getOutputName(baseName: string, patternType: PatternType): string {
   const pattern = PATTERNS.find((p) => p.type === patternType);
   return pattern ? pattern.getOutputName(baseName) : `${baseName}.nsp`;
+}
+
+/**
+ * Check if a filename is a .nsp.hdr header file (nxdumptool non-concatenation mode).
+ * Returns the baseName (e.g., "game.nsp") if it matches, null otherwise.
+ */
+export function matchHdrFile(fileName: string): string | null {
+  const match = fileName.match(/^(.+\.nsp)\.hdr$/i);
+  return match ? match[1] : null;
 }
 
 export function isZipFile(fileName: string): boolean {

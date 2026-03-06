@@ -13,6 +13,7 @@ import { FolderPicker } from "../src/components/FolderPicker";
 import { ProgressCard } from "../src/components/ProgressCard";
 import { OverallProgress } from "../src/components/OverallProgress";
 import { TaskTable } from "../src/components/TaskTable";
+import { ProcessingLog } from "../src/components/ProcessingLog";
 import { FileList } from "../src/components/FileList";
 
 export default function HomeScreen() {
@@ -126,6 +127,9 @@ export default function HomeScreen() {
 
         {/* Progress */}
         <ProgressCard progress={state.progress} />
+
+        {/* Processing Log */}
+        <ProcessingLog log={state.log} />
 
         {/* Cancel Button */}
         {isProcessing && (

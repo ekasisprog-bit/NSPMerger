@@ -23,6 +23,7 @@ export type PatternType =
   | "ns_numbered" // .ns0, .ns1, ...
   | "nsp_dotted" // .nsp.00, .nsp.01, ...
   | "xc_numbered" // .xc0, .xc1, ...
+  | "xci_dotted" // .xci.00, .xci.01, ...
   | "nsp_part" // .nsp.part0, .nsp.part1, ...
   | "bare_numbered"; // 00, 01, ... in named folder
 
@@ -98,6 +99,7 @@ export type ProcessingAction =
   | { type: "UPDATE_PROGRESS"; progress: Partial<ProcessingProgress> }
   | { type: "SET_TASKS"; tasks: ArchiveTask[] }
   | { type: "UPDATE_TASK"; index: number; task: Partial<ArchiveTask> }
+  | { type: "LOG"; message: string }
   | { type: "COMPLETE"; result: ProcessingResult }
   | { type: "ERROR"; message: string }
   | { type: "RESET" };
@@ -107,6 +109,7 @@ export interface ProcessingState {
   folderUri: string | null;
   progress: ProcessingProgress;
   tasks: ArchiveTask[];
+  log: string[];
   scanResult: ScanResult | null;
   result: ProcessingResult | null;
   errorMessage: string | null;

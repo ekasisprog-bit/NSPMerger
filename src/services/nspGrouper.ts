@@ -1,5 +1,5 @@
 import { FileEntry, FileGroup, FilePart, ScanResult, StandaloneNsp } from "@/types";
-import { matchPattern, getOutputName, isNspFile } from "@/utils/patterns";
+import { matchPattern, getOutputName, isNspFile, matchHdrFile } from "@/utils/patterns";
 
 export function groupFiles(files: FileEntry[]): ScanResult {
   const groups = new Map<string, FilePart[]>();
@@ -7,7 +7,17 @@ export function groupFiles(files: FileEntry[]): ScanResult {
   const standaloneNsps: StandaloneNsp[] = [];
   const unknownFiles: string[] = [];
 
+  // Track .nsp.hdr files separately — they need to be prepended to nsp_dotted groups
+  const hdrFiles = new Map<string, FileEntry>(); // baseName -> FileEntry
+
   for (const file of files) {
+    // Check for .nsp.hdr first
+    const hdrBaseName = matchHdrFile(file.name);
+    if (hdrBaseName) {
+      hdrFiles.set(hdrBaseName.toLowerCase(), file);
+      continue;
+    }
+
     const match = matchPattern(file.name);
 
     if (match) {
@@ -54,6 +64,22 @@ export function groupFiles(files: FileEntry[]): ScanResult {
       continue;
     }
 
+    // For nsp_dotted groups, check if there's a matching .hdr file to prepend
+    if (pattern.patternType === "nsp_dotted") {
+      const hdrKey = pattern.baseName.toLowerCase();
+      const hdrFile = hdrFiles.get(hdrKey);
+      if (hdrFile) {
+        // Prepend header as the very first part (before index 0)
+        parts.unshift({
+          uri: hdrFile.uri,
+          name: hdrFile.name,
+          size: hdrFile.size,
+          index: -1, // marker only, already in position 0
+        });
+        hdrFiles.delete(hdrKey); // consumed
+      }
+    }
+
     const outputName = getOutputName(pattern.baseName, pattern.patternType);
 
     fileGroups.push({
@@ -63,6 +89,11 @@ export function groupFiles(files: FileEntry[]): ScanResult {
       totalSize: parts.reduce((sum, p) => sum + p.size, 0),
       patternType: pattern.patternType,
     });
+  }
+
+  // Any leftover .hdr files with no matching group go to unknown
+  for (const [baseName, hdrFile] of hdrFiles) {
+    unknownFiles.push(`${hdrFile.name} (no matching .nsp.XX parts for ${baseName})`);
   }
 
   // Sort groups by name for consistent ordering

@@ -16,6 +16,7 @@ interface PipelineCallbacks {
   }) => void;
   onSetTasks: (tasks: ArchiveTask[]) => void;
   onTaskUpdate: (index: number, task: Partial<ArchiveTask>) => void;
+  onLog: (message: string) => void;
   onScanComplete: (scanResult: ScanResult) => void;
   onError: (message: string) => void;
 }
@@ -50,10 +51,7 @@ function extractPhaseProgress(
   return Math.round((completedFraction + currentFraction) * EXTRACT_WEIGHT * 100);
 }
 
-function mergePhaseProgress(
-  stepIndex: number,
-  totalSteps: number
-): number {
+function mergePhaseProgress(stepIndex: number, totalSteps: number): number {
   if (totalSteps === 0) return Math.round(EXTRACT_WEIGHT * 100);
   const base = EXTRACT_WEIGHT * 100;
   const mergeRange = MERGE_WEIGHT * 100;
@@ -71,10 +69,13 @@ export async function runPipeline(
   const standaloneFiles: string[] = [];
   const cacheDir = await NspNativeOps.getCacheDir();
 
+  const log = (msg: string) => callbacks.onLog(msg);
+
   try {
     // Step 1: List files in the selected folder
     callbacks.onPhaseChange("copying");
     callbacks.onProgress({ currentFile: "Scanning folder..." });
+    log("Scanning folder for archives...");
 
     let allFiles;
     try {
@@ -96,7 +97,12 @@ export async function runPipeline(
       );
     }
 
-    // Emit task list from pipeline's own listing (not stale folder scan)
+    log(`Found ${archiveFiles.length} archive(s):`);
+    for (const a of archiveFiles) {
+      log(`  ${a.name} (${formatBytesSimple(a.size)})`);
+    }
+
+    // Emit task list from pipeline's own listing
     callbacks.onSetTasks(
       archiveFiles.map((f) => ({ name: f.name, status: "pending" as const }))
     );
@@ -120,7 +126,7 @@ export async function runPipeline(
     const allGroups: FileGroup[] = [];
     const allStandalones: StandaloneNsp[] = [];
     const allUnknown: string[] = [];
-    const groupToArchive: number[] = []; // parallel to allGroups — tracks source archive index
+    const groupToArchive: number[] = []; // parallel to allGroups
     const totalArchives = archiveFiles.length;
 
     for (let i = 0; i < totalArchives; i++) {
@@ -128,7 +134,9 @@ export async function runPipeline(
       const archive = archiveFiles[i];
       const archiveIsRar = isRarFile(archive.name);
 
-      // --- Copy phase (0-25% of this archive's weight) ---
+      log(`--- Archive ${i + 1}/${totalArchives}: ${archive.name} ---`);
+
+      // --- Copy phase ---
       callbacks.onTaskUpdate(i, { status: "copying" });
       callbacks.onPhaseChange("copying");
       callbacks.onProgress({
@@ -155,9 +163,12 @@ export async function runPipeline(
       let cachedPath: string;
       try {
         cachedPath = await NspNativeOps.copyToCache(archive.uri, archive.name, archive.size);
+        log(`Copied to cache`);
       } catch (e: any) {
         copySub.remove();
-        errors.push(`Failed to copy ${archive.name}: ${e.message}`);
+        const msg = `Failed to copy ${archive.name}: ${e.message}`;
+        errors.push(msg);
+        log(`ERROR: ${msg}`);
         callbacks.onTaskUpdate(i, { status: "error", error: e.message });
         continue;
       }
@@ -165,7 +176,7 @@ export async function runPipeline(
       copySub.remove();
       checkCancelled(cancelHandle);
 
-      // --- Extract phase (25-75% of this archive's weight) ---
+      // --- Extract phase ---
       callbacks.onTaskUpdate(i, { status: "extracting" });
       callbacks.onPhaseChange("extracting");
       callbacks.onProgress({
@@ -193,15 +204,19 @@ export async function runPipeline(
           ? await NspNativeOps.extractRar(cachedPath, extractDir)
           : await NspNativeOps.extractZip(cachedPath, extractDir);
 
+        log(`Extracted ${result.extractedFiles.length} file(s):`);
+
         for (const filePath of result.extractedFiles) {
           const pathParts = filePath.split("/");
           const fileName = pathParts.pop() || filePath;
-          // Include parent dir in name for bare-numbered files (00, 01)
-          // so the bare_numbered pattern can distinguish subfolders
+          // Include parent dir for bare-numbered files
           const parentDir = pathParts.pop() || "";
           const qualifiedName = /^\d+$/.test(fileName) && parentDir
             ? `${parentDir}/${fileName}`
             : fileName;
+
+          log(`  ${qualifiedName}`);
+
           archiveExtracted.push({
             uri: filePath,
             name: qualifiedName,
@@ -209,7 +224,9 @@ export async function runPipeline(
           });
         }
       } catch (e: any) {
-        errors.push(`Failed to extract ${archive.name}: ${e.message}`);
+        const msg = `Failed to extract ${archive.name}: ${e.message}`;
+        errors.push(msg);
+        log(`ERROR: ${msg}`);
         callbacks.onTaskUpdate(i, { status: "error", error: e.message });
         extractSub.remove();
         try { await NspNativeOps.deleteFiles([cachedPath]); } catch {}
@@ -218,12 +235,12 @@ export async function runPipeline(
         extractSub.remove();
       }
 
-      // Delete cached archive immediately to free space
+      // Delete cached archive to free space
       try {
         await NspNativeOps.deleteFiles([cachedPath]);
       } catch {}
 
-      // --- Group phase (75-100% of this archive's weight) ---
+      // --- Group phase ---
       callbacks.onTaskUpdate(i, { status: "grouping" });
       callbacks.onProgress({
         overallPercentage: extractPhaseProgress(i, totalArchives, 0.75),
@@ -239,8 +256,25 @@ export async function runPipeline(
         }
       }
 
+      // Log grouping results
+      if (archiveScan.groups.length > 0) {
+        for (const g of archiveScan.groups) {
+          const hdrNote = g.parts[0]?.index === -1 ? " (includes .hdr)" : "";
+          log(`  MERGE GROUP: ${g.parts.length} parts -> ${g.outputName} [${g.patternType}]${hdrNote}`);
+          for (const p of g.parts) {
+            log(`    part ${p.index}: ${p.name}`);
+          }
+        }
+      }
+      if (archiveScan.standaloneNsps.length > 0) {
+        log(`  STANDALONE: ${archiveScan.standaloneNsps.map((n) => n.name).join(", ")}`);
+      }
+      if (archiveScan.unknownFiles.length > 0) {
+        log(`  UNKNOWN (skipped): ${archiveScan.unknownFiles.join(", ")}`);
+      }
+
       callbacks.onTaskUpdate(i, {
-        status: "pending", // stays pending until merge completes
+        status: "pending", // stays pending until merge/copy completes
         groupsFound: archiveScan.groups.length,
         standalonesFound: archiveScan.standaloneNsps.length,
       });
@@ -280,8 +314,22 @@ export async function runPipeline(
     });
     callbacks.onScanComplete(scanResult);
 
+    log(`--- PLAN ---`);
+    if (allGroups.length > 0) {
+      log(`Merge ${allGroups.length} group(s):`);
+      for (const g of allGroups) {
+        log(`  ${g.parts.length} parts -> ${g.outputName}`);
+      }
+    }
+    if (allStandalones.length > 0) {
+      log(`Copy ${allStandalones.length} standalone NSP(s):`);
+      for (const n of allStandalones) {
+        log(`  ${n.name}`);
+      }
+    }
+
     // Total merge+copy steps for overall progress
-    const totalMergeSteps = scanResult.groups.length + scanResult.standaloneNsps.length + 1; // +1 for cleanup
+    const totalMergeSteps = scanResult.groups.length + scanResult.standaloneNsps.length + 1;
 
     // Step 5: Merge each group
     if (scanResult.groups.length > 0) {
@@ -296,8 +344,8 @@ export async function runPipeline(
         const group = scanResult.groups[i];
         const archiveIdx = groupToArchive[i];
 
-        // Update task status to merging
         callbacks.onTaskUpdate(archiveIdx, { status: "merging" });
+        log(`Merging: ${group.outputName} (${group.parts.length} parts)...`);
 
         callbacks.onProgress({
           currentFile: `Merging: ${group.outputName}`,
@@ -321,15 +369,33 @@ export async function runPipeline(
           const inputPaths = group.parts.map((p) => p.uri);
           await NspNativeOps.mergeFiles(inputPaths, outputPath);
 
+          // Validate PFS0 magic for NSP outputs
+          if (group.outputName.toLowerCase().endsWith(".nsp")) {
+            try {
+              const isValid = await NspNativeOps.validatePfs0Magic(outputPath);
+              if (isValid) {
+                log(`  PFS0 header OK`);
+              } else {
+                log(`  WARNING: No PFS0 header! Output may be corrupt.`);
+                errors.push(`${group.outputName}: merged file has no PFS0 header — may be corrupt`);
+              }
+            } catch {
+              // validatePfs0Magic not available, skip validation
+            }
+          }
+
           // Copy merged file back to the source folder via SAF
           callbacks.onTaskUpdate(archiveIdx, { status: "copying_back" });
           await NspNativeOps.copyFromCache(outputPath, folderUri, group.outputName);
           mergedFiles.push(group.outputName);
+          log(`  Saved: ${group.outputName}`);
 
           // Delete merged cache file
           await NspNativeOps.deleteFiles([outputPath]);
         } catch (e: any) {
-          errors.push(`Failed to merge ${group.outputName}: ${e.message}`);
+          const msg = `Failed to merge ${group.outputName}: ${e.message}`;
+          errors.push(msg);
+          log(`  ERROR: ${msg}`);
           callbacks.onTaskUpdate(archiveIdx, { status: "error", error: e.message });
         } finally {
           mergeSub.remove();
@@ -341,20 +407,16 @@ export async function runPipeline(
           await NspNativeOps.deleteFiles(partPaths);
         } catch {}
 
-        // Check if all groups for this archive are done
-        const archiveGroupsDone = scanResult.groups
-          .filter((_g, gi) => groupToArchive[gi] === archiveIdx)
-          .every((_g, _gi, arr) => {
-            const globalIdx = scanResult.groups.indexOf(arr[_gi]);
-            return globalIdx <= i;
-          });
-        if (archiveGroupsDone) {
+        // Mark archive done if all its groups are processed
+        const allDone = scanResult.groups
+          .every((g, gi) => groupToArchive[gi] !== archiveIdx || gi <= i);
+        if (allDone) {
           callbacks.onTaskUpdate(archiveIdx, { status: "done" });
         }
       }
     }
 
-    // Mark archives that only had standalones (no groups) as done
+    // Mark archives without groups as done
     const archivesWithGroups = new Set(groupToArchive);
     for (let i = 0; i < totalArchives; i++) {
       if (!archivesWithGroups.has(i)) {
@@ -365,6 +427,7 @@ export async function runPipeline(
     // Step 6: Move standalone NSPs back to SAF folder
     for (let si = 0; si < scanResult.standaloneNsps.length; si++) {
       const nsp = scanResult.standaloneNsps[si];
+      log(`Copying standalone: ${nsp.name}`);
       callbacks.onProgress({
         currentFile: `Copying: ${nsp.name}`,
         overallPercentage: mergePhaseProgress(
@@ -375,12 +438,16 @@ export async function runPipeline(
       try {
         await NspNativeOps.copyFromCache(nsp.uri, folderUri, nsp.name);
         standaloneFiles.push(nsp.name);
+        log(`  Saved: ${nsp.name}`);
       } catch (e: any) {
-        errors.push(`Failed to copy standalone ${nsp.name}: ${e.message}`);
+        const msg = `Failed to copy standalone ${nsp.name}: ${e.message}`;
+        errors.push(msg);
+        log(`  ERROR: ${msg}`);
       }
     }
 
     // Step 7: Cleanup
+    log(`Cleaning up cache...`);
     callbacks.onPhaseChange("cleanup");
     callbacks.onProgress({
       currentFile: "Cleaning up cache...",
@@ -389,8 +456,7 @@ export async function runPipeline(
     try {
       await NspNativeOps.deleteFiles([cacheDir]);
     } catch {}
-
-    // Keep original archive files — user wants to retain them
+    log(`Done!`);
 
     const totalSize =
       scanResult.groups.reduce((sum, g) => sum + g.totalSize, 0) +
@@ -404,7 +470,6 @@ export async function runPipeline(
       errors,
     };
   } catch (e: any) {
-    // Attempt cleanup on error
     try {
       await NspNativeOps.deleteFiles([cacheDir]);
     } catch {}
@@ -413,10 +478,6 @@ export async function runPipeline(
   }
 }
 
-/**
- * Deduplicate output names across all groups.
- * If two groups produce "game.nsp", the second becomes "game (2).nsp".
- */
 function deduplicateOutputNames(groups: FileGroup[]): void {
   const seen = new Map<string, number>();
   for (const group of groups) {

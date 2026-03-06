@@ -61,6 +61,7 @@ declare class NspNativeOpsModuleType extends NativeModule<NspNativeOpsModuleEven
   deleteSafDocument(uri: string): Promise<boolean>;
   getFreeDiskSpace(): Promise<number>;
   getCacheDir(): Promise<string>;
+  validatePfs0Magic(filePath: string): Promise<boolean>;
 }
 
 export default requireNativeModule<NspNativeOpsModuleType>("NspNativeOps");

@@ -24,6 +24,7 @@ const initialState: ProcessingState = {
   folderUri: null,
   progress: initialProgress,
   tasks: [],
+  log: [],
   scanResult: null,
   result: null,
   errorMessage: null,
@@ -87,17 +88,26 @@ function reducer(state: ProcessingState, action: ProcessingAction): ProcessingSt
       }
       return { ...state, tasks };
     }
+    case "LOG":
+      return { ...state, log: [...state.log, action.message] };
     case "COMPLETE":
       return {
         ...state,
         phase: "done",
-        progress: { ...state.progress, phase: "done", percentage: 100, overallPercentage: 100 },
+        progress: {
+          ...state.progress,
+          phase: "done",
+          percentage: 100,
+          overallPercentage: 100,
+          currentFile: "",
+        },
         result: action.result,
       };
     case "ERROR":
       return {
         ...state,
         phase: "error",
+        progress: { ...state.progress, currentFile: "" },
         errorMessage: action.message,
       };
     case "RESET":
@@ -179,6 +189,9 @@ export function useProcessing() {
           },
           onTaskUpdate: (index, task) => {
             dispatch({ type: "UPDATE_TASK", index, task });
+          },
+          onLog: (message) => {
+            dispatch({ type: "LOG", message });
           },
           onScanComplete: (scanResult) => {
             dispatch({ type: "SCAN_COMPLETE", scanResult });

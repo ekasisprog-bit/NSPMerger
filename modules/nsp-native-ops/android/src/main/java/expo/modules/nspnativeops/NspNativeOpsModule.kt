@@ -401,5 +401,22 @@ class NspNativeOpsModule : Module() {
                 ?: throw CodedException("NO_CONTEXT", "No React context", null)
             File(context.cacheDir, "nsp_work").apply { mkdirs() }.absolutePath
         }
+
+        // ── Validate PFS0 magic bytes ──
+
+        AsyncFunction("validatePfs0Magic") { filePath: String ->
+            val file = File(filePath)
+            if (!file.exists() || file.length() < 4) {
+                false
+            } else {
+                val magic = ByteArray(4)
+                file.inputStream().use { it.read(magic) }
+                // PFS0 = 0x50 0x46 0x53 0x30
+                magic[0] == 0x50.toByte() &&
+                magic[1] == 0x46.toByte() &&
+                magic[2] == 0x53.toByte() &&
+                magic[3] == 0x30.toByte()
+            }
+        }
     }
 }
