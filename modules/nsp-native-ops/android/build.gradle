@@ -17,6 +17,10 @@ android {
   }
 }
 
+repositories {
+  maven { url 'https://jitpack.io' }
+}
+
 dependencies {
-  implementation 'com.github.junrar:junrar:7.5.5'
+  implementation 'com.github.omicronapps:7-Zip-JBinding-4Android:Release-16.02-2.03'
 }
